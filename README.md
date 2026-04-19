@@ -57,7 +57,7 @@ python scripts/import_parquet_to_duckdb.py
 ```bash
 python scripts/fetch_stock_list.py                                # 股票清單 (5 秒)
 python scripts/fetch_prices.py                                    # 2 年日 K (30 秒)
-python scripts/fetch_institutional.py --days 90                   # 90 天三大法人 (3 分)
+python scripts/fetch_institutional.py --days 730                  # 2 年三大法人 (~25 分)
 python scripts/compute_indicators.py                              # 技術指標 (1 分)
 python scripts/fetch_monthly_revenue.py --top-n -1 --resume --sleep 1.0  # 月營收 (配額用完會自動等)
 python scripts/fetch_financials.py --top-n -1 --resume --sleep 1.0       # 季財報 (同上)
@@ -90,7 +90,7 @@ streamlit run src/stock_llm/app/main.py
 - 訊號標籤 (MA 多頭、MACD 黃金、外資連買 N 日…)
 - AI 產業鏈 chip (AI 伺服器代工、HBM、ABF 載板…)
 - **K 線圖 + 切換天數 (卡片內)** — 30/60/90(預設)/180/365/730,**每張卡獨立選擇**
-  - 若 institutional 資料較短,自動將 K 線對齊,提示「法人資料較短,已自動對齊」
+  - 若 institutional 資料短於 K 線,會自動對齊並提示
   - MA5/20/60 + 量能 + 三大法人三個子圖
 - 三大法人 5/20 日累計
 - **📰 近期新聞 expander** — 7 天內所有關聯新聞
@@ -129,8 +129,8 @@ streamlit run src/stock_llm/app/main.py
 撞到 429/402 配額錯誤 或 25 秒 timeout,會**自動切換**到下一個模型:
 
 ```
-你選的主模型 → Flash → Gemma MoE → Gemma Dense
-（失敗的跳過,繼續下一個，整鏈總上限 90 秒）
+你選的主模型 → Flash Lite → Flash → Gemma MoE → Gemma Dense
+（失敗的跳過,繼續下一個,整鏈總上限 90 秒）
 ```
 
 每次呼叫在 DuckDB `llm_usage` 表留紀錄 (model / tokens / latency / success / error)。
@@ -204,17 +204,18 @@ streamlit run src/stock_llm/app/main.py
 
 ## 📅 我的資料庫目前覆蓋到什麼時候?
 
-目前 (2026-04-19) DB 狀態:
+目前 repo 內建的 parquet snapshot 覆蓋範圍 (約 1.55M rows / 57MB zstd):
 
 | 表 | 起始 | 最新 | 期間 | 檔數 |
 |---|---|---|---|---|
-| 日 K `prices_daily` | 2024-04-19 | 2026-04-17 | **2 年** | 1081 |
-| 技術指標 `indicators_daily` | 2024-04-19 | 2026-04-17 | 2 年 | 1081 |
-| 三大法人 `institutional_daily` | 2025-12-22 | 2026-04-17 | **~4 個月** | 1126 |
-| 月營收 `monthly_revenue` | 2023-03 | 2026-03 | **3 年** | 1073 |
-| 季財報 `financials_quarterly` | 2023Q1 | 2026Q1 | **3 年** | 1071 |
+| 日 K `prices_daily` | 2024-04-19 | 2026-04-17 | **2 年** | 1,081 |
+| 技術指標 `indicators_daily` | 2024-04-19 | 2026-04-17 | 2 年 | 1,081 |
+| 三大法人 `institutional_daily` | 2024-04-22 | 2026-04-17 | **2 年** | 1,128 |
+| 月營收 `monthly_revenue` | 2023-03 | 2026-03 | **3 年** | 1,073 |
+| 季財報 `financials_quarterly` | 2023Q1 | 2026Q1 | 3 年 | 1,071 |
+| 新聞 `news` | 最近 7 日 | — | 滾動 | 100+ 則 |
 
-### 自己查目前覆蓋狀況
+自己查當下狀況:
 ```python
 from stock_llm.data.store import connect
 with connect() as con:
@@ -223,8 +224,6 @@ with connect() as con:
         r = con.execute(f"SELECT MIN({col}), MAX({col}), COUNT(*) FROM {tbl}").fetchone()
         print(f"{tbl}: {r[0]} -> {r[1]} ({r[2]:,} 筆)")
 ```
-
-> ⚠️ **法人資料通常比 K 線短** — K 線預設抓 2 年,institutional 第一次只抓了 `--days 90` (約 4 個月)。想看 6 個月以上的 K 線就要 backfill (見下方情境 E)。
 
 ---
 
@@ -260,13 +259,7 @@ python scripts/fetch_monthly_revenue.py --top-n -1 --resume --sleep 1.0
 python scripts/fetch_financials.py --top-n -1 --resume --sleep 1.0
 ```
 
-### 情境 E:擴大法人資料歷史 (K 線 2 年,但法人只抓 90 天)
-K 線預設 2 年,institutional 一開始通常只抓 90 天。想讓法人圖跟 K 線一樣長:
-```bash
-python scripts/fetch_institutional.py --days 730   # 約 25 分
-```
-
-### 情境 F:更新 git snapshot (其他裝置想同步)
+### 情境 E:更新 git snapshot (其他裝置想同步)
 在主機跑完 fetch 後,把最新 DB 重新 export 成 parquet 並 push:
 ```bash
 python scripts/export_duckdb_to_parquet.py       # DB → data/snapshot/*.parquet
@@ -315,7 +308,7 @@ stock_llm/
 │   │   ├── technical.py         技術指標 + Stage 2 + 52W
 │   │   ├── chip.py              籌碼特徵 (4 個連買/連賣日數)
 │   │   ├── fundamental.py       基本面 + CAN SLIM
-│   │   ├── sentiment.py         新聞情緒 7 天加權 (半衰期 1.5 天)
+│   │   ├── sentiment.py         新聞情緒 5 天加權 (半衰期 1.5 天)
 │   │   ├── tags.py              AI 概念股 100 檔/18 類
 │   │   └── snapshot.py          特徵彙整 (tech + chip + fund + sentiment)
 │   ├── llm/
