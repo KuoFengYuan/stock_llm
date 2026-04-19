@@ -44,8 +44,16 @@ GEMINI_API_KEY=...    # 從 https://aistudio.google.com/apikey
 FINMIND_TOKEN=...     # 從 https://finmindtrade.com/ (選填,用於月營收/財報)
 ```
 
-### 3. 建立資料庫 (一次完整建庫,約 30–60 分鐘)
+### 3. 建立資料庫
 
+#### 方式 A:從 parquet 快速匯入 (30 秒,推薦)
+Repo 已附 `data/snapshot/*.parquet` (1.5M rows, 約 57MB),直接匯入重建 DB:
+```bash
+python scripts/import_parquet_to_duckdb.py
+```
+想要更新到最新資料 → 直接跑一次「情境 B:每日盤後增量」。
+
+#### 方式 B:從頭抓 (約 30–60 分鐘)
 ```bash
 python scripts/fetch_stock_list.py                                # 股票清單 (5 秒)
 python scripts/fetch_prices.py                                    # 2 年日 K (30 秒)
