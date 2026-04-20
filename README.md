@@ -22,6 +22,50 @@
 
 ---
 
+## ⚡ 日常操作速查
+
+> ⚠️ **重要**:DuckDB 單 writer 限制 — 跑任何 fetch/score 指令前務必先 `Ctrl+C` 關閉 streamlit,不然會 `IO Error: Cannot open file ...`。
+
+### 🖥️ 啟動 Dashboard(每次用)
+
+```bash
+conda activate stock
+streamlit run src/stock_llm/app/main.py
+```
+→ 預設 http://localhost:8501 · `Ctrl+C` 關閉 · 改 `src/*.py` 要完整重啟
+
+### 🔄 每日盤後更新(收盤後跑一次)
+
+```bash
+# 前置: 先 Ctrl+C 關掉 streamlit
+conda activate stock
+python scripts/daily_update.py            # 股價 + 法人 + 技術指標 + 新聞 + LLM 打分 (~5–8 分)
+# 或一次連 git push:
+python scripts/daily_update.py --push     # 上面 + export parquet + git commit + push
+```
+跑完重啟 streamlit → sidebar 點「**🔄 重建 Snapshot**」清 cache。
+
+### 📥 首次建庫(clone 專案後)
+
+```bash
+conda activate stock
+pip install -e .                                    # 裝依賴
+cp .env.example .env                                # 填 GEMINI_API_KEY (必填) + FINMIND_TOKEN (選填)
+python scripts/import_parquet_to_duckdb.py          # 從 repo 內建 parquet 還原 DB (~30 秒)
+python scripts/daily_update.py                      # 補到今日最新 (~5 分)
+streamlit run src/stock_llm/app/main.py             # 開 dashboard
+```
+
+### 📅 其他定期更新
+
+| 頻率 | 指令 | 用途 |
+|---|---|---|
+| 每月 10 日 | `python scripts/fetch_monthly_revenue.py --top-n -1 --resume --sleep 1.0` | 月營收公布 |
+| 每季末 + 45 天 | `python scripts/fetch_financials.py --top-n -1 --resume --sleep 1.0` | 季財報截止 |
+| 重抓 2 年歷史 | `python scripts/fetch_prices.py --days 730` + `fetch_institutional.py --days 730` | 長回溯 |
+
+---
+
 ## 🚀 快速開始
 
 ### 1. 安裝環境
@@ -107,7 +151,7 @@ streamlit run src/stock_llm/app/main.py
 - 只看 AI 概念股
 - AI 加分幅度 (0–15)
 - **📐 評分版本** — v1 / **v2 (預設)**
-- **🧠 LLM 模型**下拉 (5 選 1)
+- **🧠 LLM 模型**下拉 (3 選 1:Flash Lite / Flash / Pro)
 - **🔄 重建 Snapshot** (清 Streamlit cache,同步新進 DB 資料後點一次)
 
 ---
@@ -121,15 +165,15 @@ streamlit run src/stock_llm/app/main.py
 | **Flash Lite ⭐ 快·穩定** (預設) | `gemini-3.1-flash-lite-preview` | 300k | 14400 | 中文輸出穩定,3–8 秒 |
 | Flash (更聰明 · 慢) | `gemini-3-flash-preview` | 250k | 1500 | 理解力強,10–20 秒 |
 | Pro (最強 · 日限 100) | `gemini-3.1-pro-preview` | 250k | 100 | 深入分析,30 秒起 |
-| Gemma 26B MoE | `gemma-4-26b-a4b-it` | 30k | 14400 | 開源 MoE,輸出偶有格式外洩 |
-| Gemma 31B Dense | `gemma-4-31b-it` | 10k | 3600 | 開源 Dense,RPD 少 |
+
+> Gemma 26B/31B 在台股冷門股上 timeout 頻繁、中文輸出格式不穩,2026-04 從 UI 下拉移除 (原因見 [recommendation.py:429](src/stock_llm/llm/recommendation.py#L429))。仍保留 model IDs 於 [gemini.py](src/stock_llm/llm/gemini.py),需要時可手動 import。
 
 ### 自動 Fallback 鏈
 
 撞到 429/402 配額錯誤 或 25 秒 timeout,會**自動切換**到下一個模型:
 
 ```
-你選的主模型 → Flash Lite → Flash → Gemma MoE → Gemma Dense
+你選的主模型 → Flash Lite → Flash
 （失敗的跳過,繼續下一個,整鏈總上限 90 秒）
 ```
 
@@ -139,9 +183,9 @@ streamlit run src/stock_llm/app/main.py
 
 **Terminal** (跑 streamlit 的視窗):
 ```
-[INFO] LLM call start: gemini-3.1-flash-lite-preview for 2345 (attempt 1/4)
-[WARNING] Quota error on gemini-3.1-flash-lite-preview, trying next model (3 remaining)
-[INFO] LLM call start: gemini-3-flash-preview for 2345 (attempt 2/4)
+[INFO] LLM call start: gemini-3.1-flash-lite-preview for 2345 (attempt 1/2)
+[WARNING] Quota error on gemini-3.1-flash-lite-preview, trying next model (1 remaining)
+[INFO] LLM call start: gemini-3-flash-preview for 2345 (attempt 2/2)
 [INFO] LLM gemini-3-flash-preview returned in 15234ms for 2345
 ```
 
@@ -237,9 +281,43 @@ with connect() as con:
 ### 情境 A:第一次建庫 (約 30–60 分)
 見上方「快速開始 → 3. 建立資料庫」章節。
 
-### 情境 B:每日盤後增量 (約 5–8 分)
+### 情境 B:每日盤後增量 — 一鍵腳本 (推薦,約 5–8 分)
+
+`scripts/daily_update.py` 把 B + E 包成一條指令,依序跑:股價 → 法人 → 技術指標 → 新聞 → LLM 打分 → (可選) snapshot → (可選) git push。
+
 ```bash
-# --days 7 保險覆蓋上次跑之後的所有交易日
+# 最省事:全跑 + export parquet + git push (盤後一次搞定)
+python scripts/daily_update.py --push
+
+# 日常測試:全跑但不動 git
+python scripts/daily_update.py
+
+# 省 LLM token (只抓新聞不打分)
+python scripts/daily_update.py --no-llm
+
+# 完全跳過新聞 (網路不穩/趕時間)
+python scripts/daily_update.py --no-news
+
+# 連假後補長一點
+python scripts/daily_update.py --days 14 --push
+```
+
+**參數:**
+
+| 參數 | 預設 | 說明 |
+|---|---|---|
+| `--days` | 7 | 股價/法人回抓日曆天 |
+| `--news-pages` | 5 | Anue 抓幾頁 (每頁 30 則) |
+| `--news-limit` | 300 | 單次 LLM 打分上限 |
+| `--no-news` | — | 跳過新聞整段 |
+| `--no-llm` | — | 只抓新聞不打分 |
+| `--snapshot` | — | 跑完 export parquet |
+| `--push` | — | 隱含 `--snapshot`,加 git commit + push |
+
+跑完會印每步 ✅/❌ 摘要與耗時;任一步失敗 exit code = 1,方便排程觸發告警。
+
+#### 手動逐步 (想要控制或 debug 時)
+```bash
 python scripts/fetch_prices.py --days 7
 python scripts/fetch_institutional.py --days 7
 python scripts/compute_indicators.py
@@ -260,7 +338,9 @@ python scripts/fetch_financials.py --top-n -1 --resume --sleep 1.0
 ```
 
 ### 情境 E:更新 git snapshot (其他裝置想同步)
-在主機跑完 fetch 後,把最新 DB 重新 export 成 parquet 並 push:
+**推薦** 直接用情境 B 的 `daily_update.py --push`,一鍵包含 export + commit + push。
+
+手動版 (只想更新 snapshot 不跑 fetch):
 ```bash
 python scripts/export_duckdb_to_parquet.py       # DB → data/snapshot/*.parquet
 git add data/snapshot/
@@ -322,6 +402,7 @@ stock_llm/
 │   └── app/
 │       └── main.py              Streamlit Dashboard
 ├── scripts/
+│   ├── daily_update.py                                          一鍵每日更新 (B + E)
 │   ├── fetch_stock_list.py
 │   ├── fetch_prices.py / fetch_institutional.py
 │   ├── fetch_monthly_revenue.py / fetch_financials.py

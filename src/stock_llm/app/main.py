@@ -16,8 +16,6 @@ from stock_llm.llm.gemini import (
     DEFAULT_BATCH_MODEL,
     MODEL_FLASH,
     MODEL_FLASH_LITE,
-    MODEL_GEMMA_DENSE,
-    MODEL_GEMMA_MOE,
     MODEL_PRO,
 )
 
@@ -25,8 +23,6 @@ MODEL_OPTIONS = {
     "Flash Lite ⭐ 快 · 穩定": MODEL_FLASH_LITE,
     "Flash (更聰明 · 慢)":    MODEL_FLASH,
     "Pro (最強 · 日限 100)":  MODEL_PRO,
-    "Gemma 26B MoE":          MODEL_GEMMA_MOE,
-    "Gemma 31B Dense":        MODEL_GEMMA_DENSE,
 }
 MODEL_LABEL_BY_ID = {v: k for k, v in MODEL_OPTIONS.items()}
 from stock_llm.models.scoring import score_snapshot
@@ -626,10 +622,11 @@ def _render_stock_card(row: pd.Series, track: str, idx: int = 0, llm_model: str 
         if st.button("🤖 LLM 深入分析", key=btn_key, type="primary"):
             import time as _time
             t0 = _time.time()
-            status = st.status("LLM 分析中...", expanded=False)
+            stock_label = f"{name} ({code})" if name else code
+            status = st.status(f"LLM 分析中 · {stock_label}...", expanded=False)
             try:
                 label_short = MODEL_LABEL_BY_ID.get(llm_model, llm_model)
-                status.update(label=f"呼叫 {label_short}...", state="running")
+                status.update(label=f"呼叫 {label_short} 分析 {stock_label}...", state="running")
                 rec = _get_recommendation(
                     code, name, industry, track,
                     _features_to_tuple(row),
@@ -640,7 +637,7 @@ def _render_stock_card(row: pd.Series, track: str, idx: int = 0, llm_model: str 
                 fb = rec.get("fallback_used")
                 used = rec.get("model_used", "?")
                 status.update(
-                    label=f"完成 · {used} · {elapsed:.1f}s" + (" (fallback)" if fb else ""),
+                    label=f"完成 · {stock_label} · {used} · {elapsed:.1f}s" + (" (fallback)" if fb else ""),
                     state="complete",
                 )
                 att = rec.get("attempts") or []
@@ -659,11 +656,14 @@ def _render_stock_card(row: pd.Series, track: str, idx: int = 0, llm_model: str 
                             st.caption(line)
             except Exception as exc:
                 elapsed = _time.time() - t0
-                status.update(label=f"失敗: {type(exc).__name__}", state="error")
+                status.update(label=f"失敗 · {stock_label} · {type(exc).__name__}", state="error")
                 st.error(f"LLM 失敗: {type(exc).__name__}: {exc}")
                 rec = None
             if rec:
                 conf_emoji = {"high": "🟢", "medium": "🟡", "low": "🔴"}.get(rec["confidence"], "⚪")
+                # 固定小標題, 方便捲到下面時仍能看到是哪檔股票
+                industry_suffix = f" · {industry}" if industry else ""
+                st.markdown(f"##### 🤖 {stock_label}{industry_suffix} — LLM 分析")
                 tab_t, tab_c, tab_f, tab_i, tab_s = st.tabs(
                     ["📊 技術面", "💰 籌碼面", "📈 基本面", "🔗 產業鏈", "🎯 結論 + 風險"]
                 )

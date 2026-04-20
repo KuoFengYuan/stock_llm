@@ -141,10 +141,13 @@ def fetch_anue_news(
             if len(codes) == 1:
                 kept = codes
             else:
-                kept = [c for c in codes if _mentioned(stock_names.get(c, {c}), haystack)]
-                skipped += len(codes) - len(kept)
-                if not kept:
+                # 放寬: 只要任一檔的名字/代號在 title+summary 被提到, 視為「台股主題相關」,
+                # 保留整則新聞的所有標籤 (誤標交由 LLM 主題辨識 prompt 給 0 分)。
+                any_hit = any(_mentioned(stock_names.get(c, {c}), haystack) for c in codes)
+                if not any_hit:
+                    skipped += len(codes)
                     continue
+                kept = codes
 
             url = f"https://news.cnyes.com/news/id/{news_id}"
             for code in kept:

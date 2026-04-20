@@ -41,6 +41,11 @@ def _normalize(df: pd.DataFrame, stock_code: str) -> pd.DataFrame:
 
     df["stock_code"] = stock_code
     df["trade_date"] = pd.to_datetime(df["trade_date"]).dt.date
+    # yfinance 盤中/partial response 偶爾會回傳 close=NaN 但 volume 有值的廢 row,
+    # 若寫入會覆蓋 DB 正確資料 (upsert)。在這裡丟掉。
+    df = df.dropna(subset=["close"])
+    if df.empty:
+        return pd.DataFrame(columns=PRICE_COLUMNS)
     df["volume"] = df["volume"].fillna(0).astype("int64")
     return df[PRICE_COLUMNS]
 
